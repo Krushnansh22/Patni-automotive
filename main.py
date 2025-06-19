@@ -182,65 +182,79 @@ def get_current_customer_info():
 def extract_appointment_details():
     """Extract date and time information from the conversation transcript"""
     full_conversation = " ".join(conversation_transcript)
+    print(f"🔍 Analyzing conversation: {full_conversation[-200:]}")  # Last 200 chars for debugging
 
     extracted_info = {
         "appointment_date": None,
         "appointment_time": None,
         "time_slot": None,
         "service_type": None,
-        "raw_conversation": full_conversation
+        "raw_conversation": full_conversation,
+        "appointment_confirmed": False
     }
 
-    # Date patterns
+    # Enhanced date patterns
     date_patterns = [
         r'(\d{1,2}[-/]\d{1,2}[-/]\d{4})',  # DD-MM-YYYY or DD/MM/YYYY
         r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',  # YYYY-MM-DD or YYYY/MM/DD
         r'(\d{1,2}\s*\w+\s*\d{4})',  # DD Month YYYY
+        r'(\d{1,2}\s*\w+)',  # DD Month (current year assumed)
     ]
 
-    # Time slot patterns in Hindi
+    # Enhanced time slot patterns
     time_patterns = [
+        r'(सुबह\s*\d{1,2}:\d{2})',  # सुबह 10:00
+        r'(दोपहर\s*\d{1,2}:\d{2})',  # दोपहर 2:00
+        r'(शाम\s*\d{1,2}:\d{2})',  # शाम 4:00
         r'(सुबह)',  # Morning
         r'(दोपहर)',  # Afternoon
         r'(शाम)',  # Evening
         r'(रात)',  # Night
         r'(\d{1,2}:\d{2})',  # HH:MM format
         r'(\d{1,2}\s*बजे)',  # X o'clock in Hindi
+        r'(\d{1,2}\s*AM)',  # 10 AM
+        r'(\d{1,2}\s*PM)',  # 2 PM
     ]
 
     # Extract dates
     for pattern in date_patterns:
-        matches = re.findall(pattern, full_conversation)
+        matches = re.findall(pattern, full_conversation, re.IGNORECASE)
         if matches:
-            extracted_info["appointment_date"] = matches[0]
+            extracted_info["appointment_date"] = matches[-1]  # Get the last mentioned date
+            print(f"📅 Found date: {extracted_info['appointment_date']}")
             break
 
     # Extract time information
     for pattern in time_patterns:
         matches = re.findall(pattern, full_conversation, re.IGNORECASE)
         if matches:
-            extracted_info["appointment_time"] = matches[0]
+            extracted_info["appointment_time"] = matches[-1]  # Get the last mentioned time
+            print(f"⏰ Found time: {extracted_info['appointment_time']}")
             break
 
-    # Determine time slot
+    # Determine time slot from Hindi words
     if 'सुबह' in full_conversation:
-        extracted_info["time_slot"] = "morning"
+        extracted_info["time_slot"] = "सुबह (Morning)"
     elif 'दोपहर' in full_conversation:
-        extracted_info["time_slot"] = "afternoon"
+        extracted_info["time_slot"] = "दोपहर (Afternoon)"
     elif 'शाम' in full_conversation:
-        extracted_info["time_slot"] = "evening"
+        extracted_info["time_slot"] = "शाम (Evening)"
     elif 'रात' in full_conversation:
-        extracted_info["time_slot"] = "night"
+        extracted_info["time_slot"] = "रात (Night)"
+
+    # If no specific time found, use time slot
+    if not extracted_info["appointment_time"] and extracted_info["time_slot"]:
+        extracted_info["appointment_time"] = extracted_info["time_slot"]
 
     # Determine service type from current customer
     current_customer_info = get_current_customer_info()
     if current_customer_info:
         extracted_info["service_type"] = current_customer_info['service_type']
 
-    # Check if appointment was confirmed
-    confirmation_keywords = ['बुक कर दिया', 'अपॉइंटमेंट', 'बुक', 'शानदार', 'ठीक है', 'सर्विस']
-    extracted_info["appointment_confirmed"] = any(keyword in full_conversation for keyword in confirmation_keywords)
+    # Check for appointment confirmation keyword
+    extracted_info["appointment_confirmed"] = "बुक कर दी है" in full_conversation
 
+    print(f"📊 Final extracted info: {extracted_info}")
     return extracted_info
 
 
@@ -259,55 +273,66 @@ def append_service_appointment_to_excel(appointment_details, customer_record, fi
         "Address",
         "Car Delivery Date",
         "Last Servicing Date",
-        "Booking Timestamp"
+        "Booking Timestamp",
+        "Conversation Extract"
     ]
 
-    # Check if file exists
-    if os.path.exists(filename):
-        wb = openpyxl.load_workbook(filename)
-        ws = wb.active
-        print(f"📊 Loaded existing Excel file with {ws.max_row} rows of data")
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Service Appointments"
-        # Add headers
-        for col, header in enumerate(headers, 1):
-            ws.cell(row=1, column=col, value=header)
-        print("📊 Created new Excel file with headers")
-
-    # Find the next empty row
-    next_row = ws.max_row + 1
-    print(f"📝 Appending data to row {next_row}")
-
-    # Prepare data row
-    service_type_display = "First Service" if appointment_details.get(
-        'service_type') == "first_service" else "Regular Service"
-
-    appointment_data = [
-        customer_record.get('name', ''),
-        customer_record.get('phone_number', ''),
-        customer_record.get('car_model', ''),
-        service_type_display,
-        appointment_details.get('appointment_date', ''),
-        appointment_details.get('appointment_time', '') or appointment_details.get('time_slot', ''),
-        customer_record.get('address', ''),
-        customer_record.get('car_delivery_date', ''),
-        customer_record.get('last_servicing_date', ''),
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ]
-
-    # Add data to the next row
-    for col, value in enumerate(appointment_data, 1):
-        ws.cell(row=next_row, column=col, value=value)
-
-    # Save the workbook
     try:
+        # Check if file exists
+        if os.path.exists(filename):
+            wb = openpyxl.load_workbook(filename)
+            ws = wb.active
+            print(f"📊 Loaded existing Excel file with {ws.max_row} rows of data")
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Service Appointments"
+            # Add headers
+            for col, header in enumerate(headers, 1):
+                ws.cell(row=1, column=col, value=header)
+            print("📊 Created new Excel file with headers")
+
+        # Find the next empty row
+        next_row = ws.max_row + 1
+        print(f"📝 Appending data to row {next_row}")
+
+        # Prepare data row
+        service_type_display = "First Service" if appointment_details.get(
+            'service_type') == "first_service" else "Regular Service"
+
+        # Get the last part of conversation for context
+        conversation_extract = appointment_details.get('raw_conversation', '')[-300:] if appointment_details.get(
+            'raw_conversation') else "No conversation data"
+
+        appointment_data = [
+            customer_record.get('name', 'Unknown'),
+            customer_record.get('phone_number', 'Unknown'),
+            customer_record.get('car_model', 'Unknown'),
+            service_type_display,
+            appointment_details.get('appointment_date', 'Date to be confirmed'),
+            appointment_details.get('appointment_time', 'Time to be confirmed'),
+            customer_record.get('address', 'Unknown'),
+            str(customer_record.get('car_delivery_date', 'Unknown')),
+            str(customer_record.get('last_servicing_date', 'None')),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            conversation_extract
+        ]
+
+        # Add data to the next row
+        for col, value in enumerate(appointment_data, 1):
+            ws.cell(row=next_row, column=col, value=str(value))
+
+        # Save the workbook
         wb.save(filename)
         print(f"✅ Service appointment details saved to {filename} at row {next_row}")
+        print(
+            f"📋 Saved data: {customer_record.get('name')} - {appointment_details.get('appointment_date', 'TBC')} - {appointment_details.get('appointment_time', 'TBC')}")
         return True
+
     except Exception as e:
         print(f"❌ Error saving service appointment details: {e}")
+        import traceback
+        print(f"🔍 Traceback: {traceback.format_exc()}")
         return False
 
 
@@ -704,6 +729,10 @@ async def handle_media_stream(websocket: WebSocket):
                                         car_model=customer_record.get("car_model"),
                                         service_type=service_type
                                     )
+
+                                # Add user transcript to global conversation for appointment detection
+                                conversation_transcript.append(user_transcript)
+
                         except Exception as e:
                             print(f"❌ Error processing user transcript: {e}")
 
@@ -731,30 +760,42 @@ async def handle_media_stream(websocket: WebSocket):
                                     service_type=service_type
                                 )
 
-                            # Store transcript in global variable and check for service booking
-                            if any(keyword in transcript for keyword in
-                                   ["बुक कर दिया है", "सर्विस बुक", "अपॉइंटमेंट बुक"]):
-                                conversation_transcript.append(transcript)
+                            # Add AI transcript to global conversation for appointment detection
+                            conversation_transcript.append(transcript)
 
-                                # Extract appointment details and save to Excel
+                            # Check specifically for appointment confirmation keyword
+                            if "बुक कर दी है" in transcript:
+                                print(f"🎯 APPOINTMENT CONFIRMATION DETECTED: {transcript}")
+
+                                # Extract appointment details immediately
                                 current_details = extract_appointment_details()
-                                if current_details["appointment_date"] or current_details["appointment_time"]:
-                                    current_customer_info = get_current_customer_info()
-                                    if current_customer_info:
-                                        current_customer_record = current_customer_info['customer_record']
-                                        append_service_appointment_to_excel(current_details, current_customer_record)
+                                print(f"📋 Extracted details: {current_details}")
+
+                                # Get current customer info
+                                current_customer_info = get_current_customer_info()
+                                if current_customer_info:
+                                    current_customer_record = current_customer_info['customer_record']
+
+                                    # Save to Excel
+                                    success = append_service_appointment_to_excel(current_details,
+                                                                                  current_customer_record)
+
+                                    if success:
+                                        print(f"✅ APPOINTMENT SAVED TO EXCEL!")
 
                                         # Broadcast appointment confirmation
                                         await websocket_manager.broadcast_appointment_confirmation(
                                             call_id=current_call_session.call_id,
                                             customer_name=current_customer_record.get("name"),
-                                            appointment_date=current_details.get("appointment_date"),
-                                            appointment_time=current_details.get("appointment_time"),
+                                            appointment_date=current_details.get("appointment_date", "To be confirmed"),
+                                            appointment_time=current_details.get("appointment_time", "To be confirmed"),
                                             car_model=current_customer_record.get("car_model"),
-                                            service_type=service_type
+                                            service_type=service_type or "Service"
                                         )
-
-                                        print(f"🎯 *** Service Appointment Info: {current_details} ***")
+                                    else:
+                                        print(f"❌ Failed to save appointment to Excel")
+                                else:
+                                    print(f"⚠️ No customer info available for Excel save")
 
                         except (KeyError, IndexError):
                             print("⚠️ No transcript found in response")
@@ -908,7 +949,7 @@ async def initialize_session(realtime_ai_ws, user_details=None):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions":f'''AI ROLE: Female voice representative from {settings.SERVICE_CENTER_NAME} automotive service center
+            "instructions": f'''AI ROLE: Female voice representative from {settings.SERVICE_CENTER_NAME} automotive service center
 LANGUAGE: Hindi (देवनागरी लिपि) with occasional English technical terms
 VOICE STYLE: Professional, friendly, helpful, feminine, patient, understanding
 GENDER CONSISTENCY: Always use feminine forms (e.g., "बोल रही हूँ", "कर सकती हूँ", "समझ सकती हूँ", "दे सकती हूँ")
