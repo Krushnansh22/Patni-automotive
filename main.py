@@ -107,7 +107,7 @@ def determine_service_type(record):
     else:
         # If it's already a datetime object, convert to date
         delivery_date = record["car_delivery_date"].date() if isinstance(record["car_delivery_date"], datetime) else \
-        record["car_delivery_date"]
+            record["car_delivery_date"]
 
     # Calculate days since delivery
     days_since_delivery = (today - delivery_date).days
@@ -179,29 +179,36 @@ def get_current_customer_info():
         return None
 
 
-def extract_appointment_details():
-    """Extract date and time information from the conversation transcript"""
-    full_conversation = " ".join(conversation_transcript)
-    print(f"🔍 Analyzing conversation: {full_conversation[-200:]}")  # Last 200 chars for debugging
+def extract_appointment_details_from_response(confirmation_transcript):
+    """
+    Extract date and time information from the specific AI response that contains confirmation
+
+    Args:
+        confirmation_transcript (str): The specific AI response containing "बुक कर दी है"
+
+    Returns:
+        dict: Extracted appointment details from that specific response only
+    """
+    print(f"🔍 Extracting from confirmation response: {confirmation_transcript}")
 
     extracted_info = {
         "appointment_date": None,
         "appointment_time": None,
         "time_slot": None,
         "service_type": None,
-        "raw_conversation": full_conversation,
-        "appointment_confirmed": False
+        "confirmation_transcript": confirmation_transcript,
+        "appointment_confirmed": True
     }
 
-    # Enhanced date patterns
+    # Enhanced date patterns - looking in the specific confirmation response
     date_patterns = [
-        r'(\d{1,2}[-/]\d{1,2}[-/]\d{4})',  # DD-MM-YYYY or DD/MM/YYYY
+        r'(\d{1,2}[-/]\d{1,2}[-/]\d{4})',  # DD-MM-YYYY or DD/MM/YYYY (21-06-2025)
         r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',  # YYYY-MM-DD or YYYY/MM/DD
-        r'(\d{1,2}\s*\w+\s*\d{4})',  # DD Month YYYY
+        r'(\d{1,2}\s*\w+\s*\d{4})',  # DD Month YYYY (21 June 2025)
         r'(\d{1,2}\s*\w+)',  # DD Month (current year assumed)
     ]
 
-    # Enhanced time slot patterns
+    # Enhanced time slot patterns - looking in the specific confirmation response
     time_patterns = [
         r'(सुबह\s*\d{1,2}:\d{2})',  # सुबह 10:00
         r'(दोपहर\s*\d{1,2}:\d{2})',  # दोपहर 2:00
@@ -216,30 +223,30 @@ def extract_appointment_details():
         r'(\d{1,2}\s*PM)',  # 2 PM
     ]
 
-    # Extract dates
+    # Extract dates from the confirmation response only
     for pattern in date_patterns:
-        matches = re.findall(pattern, full_conversation, re.IGNORECASE)
+        matches = re.findall(pattern, confirmation_transcript, re.IGNORECASE)
         if matches:
-            extracted_info["appointment_date"] = matches[-1]  # Get the last mentioned date
-            print(f"📅 Found date: {extracted_info['appointment_date']}")
+            extracted_info["appointment_date"] = matches[0]  # Get the first (and likely only) date
+            print(f"📅 Found date in confirmation: {extracted_info['appointment_date']}")
             break
 
-    # Extract time information
+    # Extract time information from the confirmation response only
     for pattern in time_patterns:
-        matches = re.findall(pattern, full_conversation, re.IGNORECASE)
+        matches = re.findall(pattern, confirmation_transcript, re.IGNORECASE)
         if matches:
-            extracted_info["appointment_time"] = matches[-1]  # Get the last mentioned time
-            print(f"⏰ Found time: {extracted_info['appointment_time']}")
+            extracted_info["appointment_time"] = matches[0]  # Get the first (and likely only) time
+            print(f"⏰ Found time in confirmation: {extracted_info['appointment_time']}")
             break
 
-    # Determine time slot from Hindi words
-    if 'सुबह' in full_conversation:
+    # Determine time slot from Hindi words in the confirmation response
+    if 'सुबह' in confirmation_transcript:
         extracted_info["time_slot"] = "सुबह (Morning)"
-    elif 'दोपहर' in full_conversation:
+    elif 'दोपहर' in confirmation_transcript:
         extracted_info["time_slot"] = "दोपहर (Afternoon)"
-    elif 'शाम' in full_conversation:
+    elif 'शाम' in confirmation_transcript:
         extracted_info["time_slot"] = "शाम (Evening)"
-    elif 'रात' in full_conversation:
+    elif 'रात' in confirmation_transcript:
         extracted_info["time_slot"] = "रात (Night)"
 
     # If no specific time found, use time slot
@@ -251,59 +258,64 @@ def extract_appointment_details():
     if current_customer_info:
         extracted_info["service_type"] = current_customer_info['service_type']
 
-    # Check for appointment confirmation keyword
-    extracted_info["appointment_confirmed"] = "बुक कर दी है" in full_conversation
-
-    print(f"📊 Final extracted info: {extracted_info}")
+    print(f"📊 Final extracted info from confirmation: {extracted_info}")
     return extracted_info
 
 
-def append_service_appointment_to_excel(appointment_details, customer_record, filename=None):
-    """Append service appointment details to Excel file"""
+def append_appointment_to_excel(appointment_details, customer_record, filename=None):
+    """
+    Append appointment details to Excel file - Simplified version for automotive service
+
+    Args:
+        appointment_details (dict): Dictionary containing appointment info
+        customer_record (dict): Dictionary containing customer info
+        filename (str): Excel filename to write to
+    """
     if filename is None:
         filename = settings.SERVICE_APPOINTMENTS_FILE
 
     headers = [
-        "Name",
+        "Customer Name",
         "Phone Number",
         "Car Model",
         "Service Type",
         "Appointment Date",
-        "Time Slot",
+        "Appointment Time",
         "Address",
-        "Car Delivery Date",
-        "Last Servicing Date",
-        "Booking Timestamp",
-        "Conversation Extract"
+         # Changed from "Conversation Extract" to be more specific
     ]
 
     try:
         # Check if file exists
         if os.path.exists(filename):
+            # Load existing workbook - THIS PRESERVES ALL EXISTING DATA
             wb = openpyxl.load_workbook(filename)
             ws = wb.active
             print(f"📊 Loaded existing Excel file with {ws.max_row} rows of data")
         else:
+            # Create new workbook with headers ONLY if file doesn't exist
             wb = Workbook()
             ws = wb.active
             ws.title = "Service Appointments"
+
             # Add headers
             for col, header in enumerate(headers, 1):
                 ws.cell(row=1, column=col, value=header)
             print("📊 Created new Excel file with headers")
 
-        # Find the next empty row
+        # Find the next empty row - THIS ENSURES NO OVERWRITING
         next_row = ws.max_row + 1
         print(f"📝 Appending data to row {next_row}")
 
-        # Prepare data row
+        # Prepare service type display
         service_type_display = "First Service" if appointment_details.get(
             'service_type') == "first_service" else "Regular Service"
 
-        # Get the last part of conversation for context
-        conversation_extract = appointment_details.get('raw_conversation', '')[-300:] if appointment_details.get(
-            'raw_conversation') else "No conversation data"
+        # Get the specific confirmation transcript (not the entire conversation)
+        confirmation_response = appointment_details.get('confirmation_transcript',
+                                                        'No confirmation transcript available')
 
+        # Prepare data row
         appointment_data = [
             customer_record.get('name', 'Unknown'),
             customer_record.get('phone_number', 'Unknown'),
@@ -312,10 +324,6 @@ def append_service_appointment_to_excel(appointment_details, customer_record, fi
             appointment_details.get('appointment_date', 'Date to be confirmed'),
             appointment_details.get('appointment_time', 'Time to be confirmed'),
             customer_record.get('address', 'Unknown'),
-            str(customer_record.get('car_delivery_date', 'Unknown')),
-            str(customer_record.get('last_servicing_date', 'None')),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            conversation_extract
         ]
 
         # Add data to the next row
@@ -411,9 +419,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/appointment-details")
 async def get_appointment_details():
-    """API endpoint to get extracted appointment details"""
-    details = extract_appointment_details()
-    return JSONResponse(details)
+    """API endpoint to get extracted appointment details - Note: Now uses response-specific extraction"""
+    # This endpoint would need to be updated to work with the new response-specific extraction
+    # For now, return a message indicating the change
+    return JSONResponse({
+        "message": "Appointment extraction now happens automatically when 'बुक कर दी है' is detected in AI responses",
+        "method": "Response-specific extraction (not full conversation)"
+    })
 
 
 @app.get("/eligible-customers")
@@ -687,8 +699,7 @@ async def handle_media_stream(websocket: WebSocket):
                 if realtime_ai_ws.open:
                     await realtime_ai_ws.close()
 
-                # No longer need to end call session in database (no status tracking)
-                # Just broadcast status for UI purposes
+                # Broadcast status for UI purposes
                 if current_call_session:
                     await websocket_manager.broadcast_call_status(
                         call_id=current_call_session.call_id,
@@ -763,22 +774,22 @@ async def handle_media_stream(websocket: WebSocket):
                             # Add AI transcript to global conversation for appointment detection
                             conversation_transcript.append(transcript)
 
-                            # Check specifically for appointment confirmation keyword
+                            # *** UPDATED APPOINTMENT DETECTION LOGIC ***
+                            # Check specifically for appointment confirmation keyword in THIS SPECIFIC RESPONSE
                             if "बुक कर दी है" in transcript:
                                 print(f"🎯 APPOINTMENT CONFIRMATION DETECTED: {transcript}")
 
-                                # Extract appointment details immediately
-                                current_details = extract_appointment_details()
-                                print(f"📋 Extracted details: {current_details}")
+                                # Extract appointment details ONLY from this specific confirmation response
+                                current_details = extract_appointment_details_from_response(transcript)
+                                print(f"📋 Extracted details from confirmation: {current_details}")
 
                                 # Get current customer info
                                 current_customer_info = get_current_customer_info()
                                 if current_customer_info:
                                     current_customer_record = current_customer_info['customer_record']
 
-                                    # Save to Excel
-                                    success = append_service_appointment_to_excel(current_details,
-                                                                                  current_customer_record)
+                                    # Save to Excel using the new function
+                                    success = append_appointment_to_excel(current_details, current_customer_record)
 
                                     if success:
                                         print(f"✅ APPOINTMENT SAVED TO EXCEL!")
@@ -949,198 +960,47 @@ async def initialize_session(realtime_ai_ws, user_details=None):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": f'''AI ROLE: Female voice representative from {settings.SERVICE_CENTER_NAME} automotive service center
-LANGUAGE: Hindi (देवनागरी लिपि) with occasional English technical terms
-VOICE STYLE: Professional, friendly, helpful, feminine, patient, understanding
-GENDER CONSISTENCY: Always use feminine forms (e.g., "बोल रही हूँ", "कर सकती हूँ", "समझ सकती हूँ", "दे सकती हूँ")
-GOAL: Schedule car servicing appointment with maximum flexibility and customer satisfaction
+            "instructions": f'''AI ROLE: Female voice representative from automotive service center
+LANGUAGE: Hindi (देवनागरी लिपि) 
+VOICE STYLE: Professional, friendly, helpful, feminine
+GENDER CONSISTENCY: Use feminine forms (e.g., "बोल रही हूँ", "कर सकती हूँ", "समझ सकती हूँ")
+GOAL: Schedule car servicing appointment and handle customer responses
 
-CUSTOMER CONTEXT:
 You are talking to {current_customer['name']}, who owns a {current_customer.get('car_model', 'car')}.
 {service_message}
 
-INITIAL GREETING AND INTRODUCTION:
-"नमस्ते {current_customer['name']} जी, मैं {settings.SERVICE_CENTER_NAME} से {settings.AI_VOICE_NAME} बोल रही हूँ। आप कैसे हैं आज?"
+CONVERSATION FLOW:
 
-Wait for response, then continue:
+"नमस्ते {current_customer['name']} जी, मैं Patni Toyota Nagpur से Priya बोल रही हूँ। आप कैसे हैं?"
 
-"मैं आपको यह inform करने के लिए कॉल कर रही हूँ कि आपकी {current_customer.get('car_model', 'गाड़ी')} की सर्विसिंग का समय हो गया है। क्या आप अपॉइंटमेंट बुक कराना चाहेंगे?"
+(रुकें, उत्तर सुनें)
 
-SCENARIO 1: CUSTOMER SAYS YES OR SHOWS INTEREST
+"मैं आपको यह बताने के लिए कॉल कर रही हूँ कि आपकी {current_customer.get('car_model', 'गाड़ी')} की सर्विसिंग का समय हो गया है। क्या आप अपॉइंटमेंट बुक कराना चाहेंगे?"
 
-"बहुत बढ़िया! मैं आपको available dates बताती हूँ। हमारे पास कई options हैं:"
+IF USER SAYS YES / INTERESTED:
 
-FIRST DATE OFFER:
-"क्या आप इस week में ला सकते हैं? मेरे पास {(datetime.today() + timedelta(days=1)).strftime("%d-%m-%Y")} {(datetime.today() + timedelta(days=1)).strftime("%A")}, {(datetime.today() + timedelta(days=2)).strftime("%d-%m-%Y")} {(datetime.today() + timedelta(days=2)).strftime("%A")}, या {(datetime.today() + timedelta(days=3)).strftime("%d-%m-%Y")} {(datetime.today() + timedelta(days=3)).strftime("%A")} उपलब्ध है।"
+"बहुत अच्छा! मैं आपको कुछ उपलब्ध तारीखें बताती हूँ —"
 
-IF CUSTOMER REJECTS FIRST DATES:
-"कोई बात नहीं! मैं आपको next week के dates भी बता सकती हूँ। {(datetime.today() + timedelta(days=7)).strftime("%d-%m-%Y")}, {(datetime.today() + timedelta(days=8)).strftime("%d-%m-%Y")}, {(datetime.today() + timedelta(days=9)).strftime("%d-%m-%Y")}, या {(datetime.today() + timedelta(days=10)).strftime("%d-%m-%Y")} कैसा रहेगा?"
+"क्या आप {(datetime.today() + timedelta(days=1)).strftime("%d-%m-%Y")}, {(datetime.today() + timedelta(days=2)).strftime("%d-%m-%Y")} को लाना पसंद करेंगे?"
 
-IF CUSTOMER WANTS CUSTOM DATE:
-"बिल्कुल! आप जो भी date prefer करते हैं, बताइए। मैं check कर सकती हूँ कि वो available है या नहीं। कौन सी date आपको convenient लगती है?"
+(रुकें, तारीख चुनने दें)
 
-TIME SLOT SELECTION:
-"Perfect! अब time के बारे में बात करते हैं। उस दिन आपको कौन सा time slot सुविधाजनक लगेगा?"
+"और उस दिन आपको कौन-सा समय ठीक लगेगा — सुबह, दोपहर या शाम?"
 
-"हमारे पास ये options हैं:
-सुबह 9:00 बजे से 12:00 बजे तक
-दोपहर 12:00 बजे से 3:00 बजे तक  
-शाम 3:00 बजे से 6:00 बजे तक"
+(रुकें, समय चुनने दें)
 
-IF CUSTOMER WANTS SPECIFIC TIME:
-"आप specific time भी बता सकते हैं। हम 9 AM से 6 PM तक open हैं।"
+"शानदार! तो मैंने आपकी {current_customer.get('car_model', 'गाड़ी')} की सर्विसिंग {{चुनी हुई तारीख}} को {{चुना हुआ समय}} के लिए बुक कर दी है।"
 
-FINAL CONFIRMATION:
-"शानदार! तो मैं confirm कर रही हूँ:
-Customer: {current_customer['name']} जी
-Vehicle: {current_customer.get('car_model', 'गाड़ी')}
-Date: [chosen date]
-Time: [chosen time]
-Service Type: [service type]
+IF USER SAYS NO / NOT NOW:
 
-क्या ये सब details सही हैं?"
+"कोई बात नहीं — जब भी आप तैयार हों, हमें कॉल कर सकते हैं। धन्यवाद!"
 
-Wait for confirmation, then:
-
-"Perfect! आपकी appointment book हो गई है। आपको SMS confirmation भी मिलेगा।"
-
-SCENARIO 2: CUSTOMER SAYS NO OR NOT INTERESTED
-
-"मैं समझ सकती हूँ। क्या मैं पूछ सकती हूँ कि कोई specific reason है?"
-
-IF TIME PROBLEM: "कोई बात नहीं, आप बताइए कि कब convenient होगा?"
-IF COST CONCERN: "Sir/Madam, हमारे competitive rates हैं और quality service guarantee के साथ।"
-IF RECENTLY SERVICED: "अच्छा, कब कराई थी last service? मैं check कर लेती हूँ।"
-
-FOLLOW UP OFFER:
-"फिर भी अगर अभी नहीं तो कोई बात नहीं। क्या मैं आपको 2-3 week बाद reminder call कर सकती हूँ?"
-
-SCENARIO 3: CUSTOMER ASKS QUESTIONS ABOUT SERVICE
-
-SERVICE DETAILS QUERIES:
-"Service में ये सब included है:
-Oil change और filter replacement
-Engine check-up  
-Brake inspection
-Tire pressure check
-Basic diagnostic
-Cleaning interior और exterior
-सब कुछ manufacturer guidelines के according"
-
-COST QUERIES:
-"Cost आपकी car model और service type पर depend करती है। Generally:
-First service: 2,000 से 4,000 rupees range में
-Regular service: 3,000 से 6,000 rupees range में
-Exact estimate appointment के time पर मिलेगा।"
-
-TIME DURATION:
-"Service में usually 3-4 घंटे लगते हैं। आप waiting area में रह सकते हैं या फिर हम pickup-drop की facility भी provide करते हैं।"
-
-WARRANTY:
-"हमारी सारी service work की 30 days warranty होती है।"
-
-SCENARIO 4: CUSTOMER IS BUSY OR WANTS TO CALL BACK
-
-"बिल्कुल! मैं समझती हूँ आप busy हैं। 
-क्या मैं कोई और convenient time पर call कर सकती हूँ?
-या फिर आप direct हमें call कर सकते हैं
-हमारा WhatsApp number भी है appointment के लिए।"
-
-SCENARIO 5: TECHNICAL ISSUES OR COMPLAINTS
-
-"अगर कोई पिछली service से issue है:
-मुझे details बताइए, मैं immediately manager को inform करूंगी
-आप direct showroom आ सकते हैं, हम तुरंत देखेंगे
-अगर warranty period में है तो free में ठीक होगा।"
-
-OBJECTION HANDLING TECHNIQUES:
-
-PRICE OBJECTION: 
-"Sir/Madam, regular maintenance में थोड़ा खर्च करने से बड़ी problems से बच सकते हैं।"
-
-TIME OBJECTION: 
-"हमारी express service भी है, 2 घंटे में basic service हो जाती है।"
-
-TRUST ISSUES: 
-"हम authorized service center हैं, trained technicians हैं।"
-
-GENTLE UPSELLING OPPORTUNITIES:
-
-When customer agrees to basic service:
-"Extended warranty option available है
-Car accessories भी देख सकते हैं
-Insurance renewal का time आ गया है तो हम help कर सकते हैं।"
-
-EMERGENCY SITUATION HANDLING:
-
-If customer mentions urgent problems like:
-"गाड़ी start नहीं हो रही"
-"कोई अजीब आवाज आ रही है"
-"brake problem है"
-"accident हुआ है"
-
-IMMEDIATE RESPONSE:
-"ये तो serious matter है। तुरंत नहीं चलाएं गाड़ी।
-हमारी emergency service available है
-Towing facility भी है अगर जरूरत हो।
-मैं immediately technician को inform करती हूँ।"
-
-FOLLOW-UP PROMISES:
-
-For confirmed appointments: 
-"Appointment से एक दिन पहले confirmation call आएगा।"
-
-For declined customers: 
-"3 week बाद gentle reminder call करूंगी।"
-
-After service completion: 
-"Service के बाद feedback call आएगा।"
-
-CONVERSATION GUIDELINES:
-
-TONE AND MANNER:
-हमेशा patient और understanding रहें
-Customer को rush न करें
-Natural conversation flow maintain करें
-Technical terms Hindi में explain करें
-
-FLEXIBILITY APPROACH:
-Customer की हर reasonable request accommodate करने की कोशिश करें
-Multiple options always provide करें
-Alternatives भी suggest करें
-
-PERSONALIZATION TECHNIQUES:
-Customer का name frequently use करें
-Car model mention करें
-Past service history refer करें if available
-
-PROFESSIONAL CLOSING:
-हमेशा positive note पर end करें
-Contact information provide करें
-Thank you और have a great day कहें
-
-ERROR HANDLING RESPONSES:
-
-If technical detail unknown: 
-"मैं तुरंत check करके बताती हूँ"
-
-If system issues occur: 
-"थोड़ा technical issue है, मैं personally ensure करूंगी"
-
-If requested dates unavailable: 
-"Alternative options देती हूँ"
-
-IMPORTANT CONVERSATION PRINCIPLES:
-
-हर response natural और conversational होना चाहिए
-Scripted नहीं लगना चाहिए
-Customer के mood के according adapt करें
-Safety और urgency को priority दें
-Competitive pricing highlight करें
-Quality और warranty emphasize करें
-Customer satisfaction को सबसे ज्यादा importance दें
-
-Remember: The goal is to sound like a helpful, knowledgeable, and caring service representative who genuinely wants to help the customer maintain their vehicle properly.''',
+IMPORTANT NOTES:
+- Be empathetic and understanding
+- If customer has concerns about cost, mention competitive pricing
+- If they ask about service details, explain basic maintenance check
+- Always confirm appointment details clearly
+- Keep conversation natural and friendly''',
             "modalities": ["text", "audio"],
             "temperature": 0.7,
         }
