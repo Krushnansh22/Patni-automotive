@@ -143,6 +143,11 @@
             opacity: 0.8;
         }
 
+        .call-item.started {
+            border-left-color: #27ae60;
+            background: #d4edda;
+        }
+
         .call-info h4 {
             color: #1e3c72;
             font-size: 1em;
@@ -180,7 +185,7 @@
             margin-top: 5px;
         }
 
-        .call-status.active {
+        .call-status.started {
             background: #d4edda;
             color: #155724;
         }
@@ -423,6 +428,8 @@
             </div>
             <div class="stats">
                 <span>Connected: <strong id="connectionTime">--:--</strong></span>
+                <span>Active Calls: <strong id="activeCalls">0</strong></span>
+                <span>Total Messages: <strong id="totalMessages">0</strong></span>
             </div>
         </div>
 
@@ -464,6 +471,7 @@
                 this.calls = new Map();
                 this.transcripts = new Map();
                 this.totalMessages = 0;
+                this.activeCalls = 0;
 
                 this.init();
             }
@@ -523,13 +531,19 @@
                     case 'call_status':
                         this.handleCallStatusMessage(data);
                         break;
+                    case 'customer_info':
+                        this.handleCustomerInfoMessage(data);
+                        break;
+                    case 'appointment_confirmed':
+                        this.handleAppointmentConfirmation(data);
+                        break;
                     case 'connection_status':
                     case 'pong':
                     case 'keepalive':
                         // Handle connection messages
                         break;
                     default:
-                        console.log('Unknown message type:', data.type);
+                        console.log('Unknown message type:', data.type, data);
                 }
             }
 
@@ -559,18 +573,24 @@
             }
 
             handleCallStatusMessage(data) {
-                const { call_id, status, customer_name, timestamp } = data;
+                const { call_id, status, patient_name, car_model, service_type, phone_number, timestamp } = data;
+
+                console.log('📞 Call status received:', data);
 
                 if (status === 'started') {
                     const call = {
                         call_id,
-                        customer_name: customer_name || 'Unknown Customer',
-                        status: 'active',
-                        started_at: new Date(timestamp)
+                        customer_name: patient_name || 'Unknown Customer',
+                        customer_phone: phone_number || 'Unknown',
+                        car_model: car_model || 'Unknown Car',
+                        service_type: service_type || 'unknown',
+                        status: 'started',
+                        started_at: new Date(timestamp || new Date())
                     };
 
                     this.calls.set(call_id, call);
                     this.addCallToSidebar(call);
+                    this.activeCalls++;
 
                     // Auto-select the new call
                     this.selectCall(call_id);
@@ -579,12 +599,52 @@
                     const call = this.calls.get(call_id);
                     if (call) {
                         call.status = 'ended';
-                        call.ended_at = new Date(timestamp);
+                        call.ended_at = new Date(timestamp || new Date());
                         this.updateCallInSidebar(call);
+                        this.activeCalls = Math.max(0, this.activeCalls - 1);
                     }
                 }
 
                 this.updateStats();
+            }
+
+            handleCustomerInfoMessage(data) {
+                const { call_id, customer_data } = data;
+                console.log('👤 Customer info received:', data);
+
+                // Update call information with customer data
+                const call = this.calls.get(call_id);
+                if (call && customer_data) {
+                    call.customer_name = customer_data.name || call.customer_name;
+                    call.customer_phone = customer_data.phone_number || call.customer_phone;
+                    call.car_model = customer_data.car_model || call.car_model;
+                    call.address = customer_data.address;
+                    call.car_delivery_date = customer_data.car_delivery_date;
+                    call.last_servicing_date = customer_data.last_servicing_date;
+
+                    // Update the sidebar display
+                    this.updateCallInSidebar(call);
+
+                    // Update current call info if this is the selected call
+                    if (this.currentCallId === call_id) {
+                        this.updateCurrentCallInfo(call);
+                    }
+                }
+            }
+
+            handleAppointmentConfirmation(data) {
+                const { call_id, customer_name, appointment_date, appointment_time, car_model, service_type } = data;
+                console.log('📅 Appointment confirmed:', data);
+
+                // Show a notification or update UI to indicate appointment was confirmed
+                const call = this.calls.get(call_id);
+                if (call) {
+                    call.appointment_confirmed = true;
+                    call.appointment_date = appointment_date;
+                    call.appointment_time = appointment_time;
+
+                    this.updateCallInSidebar(call);
+                }
             }
 
             async loadRecentCalls() {
@@ -610,8 +670,20 @@
                 }
 
                 calls.forEach(call => {
-                    this.calls.set(call.call_id, call);
-                    this.addCallToSidebar(call);
+                    // Convert the API response to our format
+                    const callData = {
+                        call_id: call.call_id,
+                        customer_name: call.customer_name,
+                        customer_phone: call.customer_phone,
+                        car_model: call.car_model,
+                        service_type: call.service_type,
+                        status: 'ended', // Historical calls are ended
+                        started_at: call.started_at,
+                        ended_at: call.ended_at || call.started_at
+                    };
+
+                    this.calls.set(call.call_id, callData);
+                    this.addCallToSidebar(callData);
                 });
             }
 
@@ -622,6 +694,14 @@
                 const loading = container.querySelector('.loading');
                 if (loading) {
                     loading.remove();
+                }
+
+                // Check if call already exists in sidebar
+                const existingCall = container.querySelector(`[data-call-id="${call.call_id}"]`);
+                if (existingCall) {
+                    // Update existing call instead of adding duplicate
+                    this.updateCallInSidebar(call);
+                    return;
                 }
 
                 const callElement = this.createCallElement(call);
@@ -639,12 +719,19 @@
                     this.calculateDuration(call.started_at, call.ended_at) :
                     'Ongoing';
 
+                const serviceTypeDisplay = call.service_type === 'first_service' ? 'First Service' :
+                                         call.service_type === 'second_service' ? 'Regular Service' :
+                                         call.service_type || 'Service';
+
                 div.innerHTML = `
                     <div class="call-info">
-                        <h4>${call.customer_name}</h4>
+                        <h4>${call.customer_name || 'Unknown Customer'}</h4>
                         <p>📞 ${call.customer_phone || 'Unknown'}</p>
+                        <p>🚗 ${call.car_model || 'Unknown Car'}</p>
                         <p>🕐 ${startTime}</p>
                         <p>⏱️ ${duration}</p>
+                        <span class="service-type ${call.service_type}">${serviceTypeDisplay}</span>
+                        <span class="call-status ${call.status}">${call.status === 'started' ? 'Active' : 'Ended'}</span>
                     </div>
                 `;
 
@@ -654,22 +741,10 @@
             updateCallInSidebar(call) {
                 const element = document.querySelector(`[data-call-id="${call.call_id}"]`);
                 if (element) {
-                    element.className = `call-item ${call.status}`;
-                    const statusElement = element.querySelector('.call-status');
-                    if (statusElement) {
-                        statusElement.textContent = call.status;
-                        statusElement.className = `call-status ${call.status}`;
-                    }
-
-                    // Update duration
-                    const duration = call.ended_at ?
-                        this.calculateDuration(call.started_at, call.ended_at) :
-                        'Ongoing';
-
-                    const durationElement = element.querySelector('.call-info p:last-of-type');
-                    if (durationElement) {
-                        durationElement.textContent = `⏱️ ${duration}`;
-                    }
+                    // Update the entire element content
+                    const newElement = this.createCallElement(call);
+                    element.innerHTML = newElement.innerHTML;
+                    element.className = newElement.className;
                 }
             }
 
@@ -689,12 +764,24 @@
                 // Update current call info
                 const call = this.calls.get(callId);
                 if (call) {
-                    document.getElementById('currentCallInfo').textContent =
-                        `${call.customer_name} - ${call.status} - ${new Date(call.started_at).toLocaleString()}`;
+                    this.updateCurrentCallInfo(call);
                 }
 
                 // Load and display transcripts
                 await this.loadCallTranscripts(callId);
+            }
+
+            updateCurrentCallInfo(call) {
+                const serviceTypeDisplay = call.service_type === 'first_service' ? 'First Service' :
+                                         call.service_type === 'second_service' ? 'Regular Service' :
+                                         call.service_type || 'Service';
+
+                const statusText = call.status === 'started' ? 'Active Call' : 'Ended';
+
+                document.getElementById('currentCallInfo').innerHTML = `
+                    <strong>${call.customer_name}</strong> - ${call.car_model} - ${serviceTypeDisplay} - ${statusText}<br>
+                    📞 ${call.customer_phone} | 🕐 ${new Date(call.started_at).toLocaleString()}
+                `;
             }
 
             async loadCallTranscripts(callId) {
@@ -785,8 +872,7 @@
             }
 
             updateStats() {
-                const activeCalls = Array.from(this.calls.values()).filter(call => call.status === 'active').length;
-                document.getElementById('activeCalls').textContent = activeCalls;
+                document.getElementById('activeCalls').textContent = this.activeCalls;
                 document.getElementById('totalMessages').textContent = this.totalMessages;
             }
 
@@ -838,7 +924,7 @@
 
         // Initialize dashboard when page loads
         document.addEventListener('DOMContentLoaded', () => {
-            new ServiceDashboard();
+            window.dashboard = new ServiceDashboard();
         });
 
         // Handle page visibility changes to maintain connection
